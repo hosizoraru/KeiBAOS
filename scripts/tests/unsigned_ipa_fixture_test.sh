@@ -72,8 +72,9 @@ assert_contains() {
 run_inspector() {
   local ipa_path="$1"
   local output_path="$2"
+  shift 2
   set +e
-  "$repo_root/scripts/inspect_unsigned_ipa.sh" "$ipa_path" >"$output_path" 2>&1
+  "$repo_root/scripts/inspect_unsigned_ipa.sh" "$@" "$ipa_path" >"$output_path" 2>&1
   local status=$?
   set -e
   return "$status"
@@ -98,7 +99,7 @@ test_inspector_rejects_mismatched_watch_extension_prefix() {
     exit 1
   fi
 
-  assert_contains "$output_path" "Bundle nesting: invalid"
+  assert_contains "$output_path" "Direct bundle nesting: invalid"
   assert_contains "$output_path" "KeiBA.app/Watch/KeiBAWatch.app/PlugIns/KeiBAWatchWidgets.appex"
   assert_contains "$output_path" "expected prefix os.kei.KeiBA.3CKCL389SP.watchkitapp."
 }
@@ -122,7 +123,7 @@ test_inspector_accepts_valid_nested_bundle_prefixes() {
     exit 1
   fi
 
-  assert_contains "$output_path" "Bundle nesting: ok"
+  assert_contains "$output_path" "Direct bundle nesting: ok"
 }
 
 test_packaging_rewrites_sideload_bundle_tree() {
@@ -158,7 +159,68 @@ test_packaging_rewrites_sideload_bundle_tree() {
   assert_contains "$inspect_path" "Bundle ID: os.kei.KeiBA.3CKCL389SP"
   assert_contains "$inspect_path" "KeiBA.app/Watch/KeiBAWatch.app -> os.kei.KeiBA.3CKCL389SP.watchkitapp"
   assert_contains "$inspect_path" "KeiBA.app/Watch/KeiBAWatch.app/PlugIns/KeiBAWatchWidgets.appex -> os.kei.KeiBA.3CKCL389SP.watchkitapp.widgets"
-  assert_contains "$inspect_path" "Bundle nesting: ok"
+  assert_contains "$inspect_path" "Direct bundle nesting: ok"
+}
+
+test_inspector_rejects_impactor_unprepared_watch_extension_prefix() {
+  local payload_root="$tmp_dir/impactor-unprepared"
+  local ipa_path="$tmp_dir/impactor-unprepared.ipa"
+  local output_path="$tmp_dir/impactor-unprepared.out"
+
+  make_payload_tree \
+    "$payload_root" \
+    os.kei.KeiBA \
+    os.kei.KeiBA.KeiBAiOSWidgets \
+    os.kei.KeiBA.watchkitapp \
+    os.kei.KeiBA.watchkitapp.widgets
+  make_ipa "$payload_root" "$ipa_path"
+
+  if run_inspector "$ipa_path" "$output_path" --impactor-team-id 3CKCL389SP; then
+    echo "expected inspector to reject an Impactor package with unprepared Watch widgets" >&2
+    cat "$output_path" >&2
+    exit 1
+  fi
+
+  assert_contains "$output_path" "Impactor bundle nesting: invalid"
+  assert_contains "$output_path" "expected prefix os.kei.KeiBA.3CKCL389SP.watchkitapp."
+}
+
+test_packaging_prepares_impactor_watch_extensions() {
+  local derived_data="$tmp_dir/impactor-DerivedData"
+  local artifacts="$tmp_dir/impactor-artifacts"
+  local app_path="$derived_data/Build/Products/Release-iphoneos/KeiBA.app"
+  local output_path="$tmp_dir/impactor-package.out"
+  local inspect_path="$tmp_dir/impactor-package-inspect.out"
+  local ipa_path="$artifacts/KeiBA-iOS-impactor-fixture-impactor-unsigned.ipa"
+
+  make_payload_tree \
+    "$derived_data/Build/Products/Release-iphoneos" \
+    os.kei.KeiBA \
+    os.kei.KeiBA.KeiBAiOSWidgets \
+    os.kei.KeiBA.watchkitapp \
+    os.kei.KeiBA.watchkitapp.widgets
+  mv "$derived_data/Build/Products/Release-iphoneos/Payload/KeiBA.app" "$app_path"
+  rmdir "$derived_data/Build/Products/Release-iphoneos/Payload"
+
+  APP_MARKETING_VERSION=1.0.1 \
+  APP_BUILD_VERSION=1 \
+  ARTIFACT_SLUG=impactor-fixture \
+  IMPACTOR_TEAM_ID=3CKCL389SP \
+  DERIVED_DATA_PATH="$derived_data" \
+  ARTIFACTS_DIR="$artifacts" \
+  SWIFTPM_CACHE_PATH="$tmp_dir/spm-cache-impactor" \
+  SKIP_PACKAGE_RESOLVE=1 \
+  XCODEBUILD=/usr/bin/true \
+    "$repo_root/scripts/ci/build_unsigned_ipa.sh" >"$output_path" 2>&1
+
+  "$repo_root/scripts/inspect_unsigned_ipa.sh" --impactor-team-id 3CKCL389SP "$ipa_path" >"$inspect_path"
+
+  assert_contains "$inspect_path" "Bundle ID: os.kei.KeiBA"
+  assert_contains "$inspect_path" "KeiBA.app/Watch/KeiBAWatch.app -> os.kei.KeiBA.watchkitapp"
+  assert_contains "$inspect_path" "KeiBA.app/Watch/KeiBAWatch.app/PlugIns/KeiBAWatchWidgets.appex -> os.kei.KeiBA.3CKCL389SP.watchkitapp.widgets"
+  assert_contains "$inspect_path" "Direct bundle nesting: invalid"
+  assert_contains "$inspect_path" "Impactor predicted root: os.kei.KeiBA.3CKCL389SP"
+  assert_contains "$inspect_path" "Impactor bundle nesting: ok"
 }
 
 test_packaging_accepts_relative_artifacts_dir() {
@@ -210,6 +272,8 @@ test_packaging_accepts_relative_artifacts_dir() {
 test_inspector_rejects_mismatched_watch_extension_prefix
 test_inspector_accepts_valid_nested_bundle_prefixes
 test_packaging_rewrites_sideload_bundle_tree
+test_inspector_rejects_impactor_unprepared_watch_extension_prefix
+test_packaging_prepares_impactor_watch_extensions
 test_packaging_accepts_relative_artifacts_dir
 
 echo "unsigned IPA fixture tests passed"

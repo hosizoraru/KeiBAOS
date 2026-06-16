@@ -6,22 +6,60 @@ usage() {
 Inspect a KeiBA unsigned IPA.
 
 Usage:
-  scripts/inspect_unsigned_ipa.sh PATH_TO_IPA [PATH_TO_IPA ...]
+  scripts/inspect_unsigned_ipa.sh [--impactor-team-id TEAM_ID] PATH_TO_IPA [PATH_TO_IPA ...]
 
 Checks that the IPA has a Payload/*.app root, prints bundle metadata, lists
 embedded extensions/watch content, verifies nested bundle identifier prefixes,
 and reports whether _CodeSignature folders are present.
+
+Options:
+  --impactor-team-id TEAM_ID  Also verify the package shape expected after
+                              Impactor appends TEAM_ID to the root app id.
 EOF
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
+impactor_team_id=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --impactor-team-id)
+      impactor_team_id="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "error: unknown argument: $1" >&2
+      usage >&2
+      exit 64
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 if [[ $# -eq 0 ]]; then
   usage >&2
   exit 64
+fi
+
+validate_team_identifier() {
+  local team_id="$1"
+  if [[ ! "$team_id" =~ ^[A-Za-z0-9]+$ ]]; then
+    echo "error: invalid team identifier: $team_id" >&2
+    exit 64
+  fi
+}
+
+if [[ -n "$impactor_team_id" ]]; then
+  validate_team_identifier "$impactor_team_id"
 fi
 
 inspect_ipa() {
@@ -153,11 +191,87 @@ inspect_ipa() {
 
   echo
   if [[ "${#nesting_errors[@]}" -eq 0 ]]; then
-    echo "Bundle nesting: ok"
+    echo "Direct bundle nesting: ok"
   else
-    echo "Bundle nesting: invalid"
+    echo "Direct bundle nesting: invalid"
     printf '  %s\n' "${nesting_errors[@]}"
-    return 1
+  fi
+
+  local impactor_errors=()
+  add_impactor_error() {
+    impactor_errors+=("$1")
+  }
+
+  check_impactor_rewritable_prefix() {
+    local bundle_path="$1"
+    local parent_id="$2"
+    local current_id
+    local expected_prefix
+    current_id="$(bundle_id_for_path "$bundle_path")"
+    expected_prefix="$parent_id."
+
+    if [[ -z "$current_id" ]]; then
+      add_impactor_error "$(relative_bundle_path "$bundle_path") has no CFBundleIdentifier"
+    elif [[ "$current_id" != "$expected_prefix"* ]]; then
+      add_impactor_error "$(relative_bundle_path "$bundle_path") -> $current_id; expected pre-Impactor prefix $expected_prefix"
+    fi
+  }
+
+  check_impactor_prepared_prefix() {
+    local bundle_path="$1"
+    local future_parent_id="$2"
+    local current_id
+    local expected_prefix
+    current_id="$(bundle_id_for_path "$bundle_path")"
+    expected_prefix="$future_parent_id."
+
+    if [[ -z "$current_id" ]]; then
+      add_impactor_error "$(relative_bundle_path "$bundle_path") has no CFBundleIdentifier"
+    elif [[ "$current_id" != "$expected_prefix"* ]]; then
+      add_impactor_error "$(relative_bundle_path "$bundle_path") -> $current_id; expected prefix $expected_prefix"
+    fi
+  }
+
+  if [[ -n "$impactor_team_id" ]]; then
+    local impactor_root_id
+    impactor_root_id="$bundle_id.$impactor_team_id"
+    echo
+    echo "Impactor predicted root: $impactor_root_id"
+
+    if [[ -z "$bundle_id" ]]; then
+      add_impactor_error "KeiBA.app has no CFBundleIdentifier"
+    else
+      if [[ -d "$app_path/PlugIns" ]]; then
+        while IFS= read -r -d '' app_extension_path; do
+          check_impactor_rewritable_prefix "$app_extension_path" "$bundle_id"
+        done < <(find "$app_path/PlugIns" -maxdepth 1 -type d -name '*.appex' -print0)
+      fi
+
+      if [[ -d "$app_path/Watch" ]]; then
+        while IFS= read -r -d '' watch_app_path; do
+          local watch_bundle_id
+          local impactor_watch_id
+          watch_bundle_id="$(bundle_id_for_path "$watch_app_path")"
+          check_impactor_rewritable_prefix "$watch_app_path" "$bundle_id"
+
+          if [[ -n "$watch_bundle_id" ]]; then
+            impactor_watch_id="${watch_bundle_id//$bundle_id/$impactor_root_id}"
+            if [[ -d "$watch_app_path/PlugIns" ]]; then
+              while IFS= read -r -d '' watch_extension_path; do
+                check_impactor_prepared_prefix "$watch_extension_path" "$impactor_watch_id"
+              done < <(find "$watch_app_path/PlugIns" -maxdepth 1 -type d -name '*.appex' -print0)
+            fi
+          fi
+        done < <(find "$app_path/Watch" -maxdepth 1 -type d -name '*.app' -print0)
+      fi
+    fi
+
+    if [[ "${#impactor_errors[@]}" -eq 0 ]]; then
+      echo "Impactor bundle nesting: ok"
+    else
+      echo "Impactor bundle nesting: invalid"
+      printf '  %s\n' "${impactor_errors[@]}"
+    fi
   fi
 
   echo
@@ -165,6 +279,12 @@ inspect_ipa() {
     echo "Code signatures: _CodeSignature folders are present"
   else
     echo "Code signatures: none found"
+  fi
+
+  if [[ -n "$impactor_team_id" ]]; then
+    [[ "${#impactor_errors[@]}" -eq 0 ]]
+  else
+    [[ "${#nesting_errors[@]}" -eq 0 ]]
   fi
 }
 

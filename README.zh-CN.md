@@ -126,18 +126,19 @@ DerivedData、SwiftPM cache 与产物写入已忽略的 `.build/`。它适合作
 也可以作为后续接入 LiveContainer 订阅的基础产物；它仍然不是已经签名、TestFlight 或
 App Store 可直接发布的包。
 
-部分侧载工具会在安装前改写主 app 的 bundle identifier。若工具提示
-`AppexBundleIDNotPrefixed`，请按提示里的期望前缀重新打包：例如期望前缀是
-`os.kei.KeiBA.3CKCL389SP.watchkitapp.`，则侧载根 bundle id 应传
-`os.kei.KeiBA.3CKCL389SP`。
+Impactor 会在签名时把所选 Apple Developer team id 追加到主 app 的 bundle identifier，
+但它当前的嵌套 bundle 扫描可能漏掉嵌在 Watch app 里的 WidgetKit extension。若 Impactor
+提示 `AppexBundleIDNotPrefixed`，请按错误里的期望前缀取出 team id 重新打包：例如期望前缀是
+`os.kei.KeiBA.3CKCL389SP.watchkitapp.`，则 Impactor team id 是 `3CKCL389SP`。
 
 ```sh
-./scripts/package_unsigned_ipa.sh --sideload-bundle-id os.kei.KeiBA.3CKCL389SP
-./scripts/inspect_unsigned_ipa.sh .build/artifacts/KeiBA-iOS-*-unsigned.ipa
+./scripts/package_unsigned_ipa.sh --impactor-team-id 3CKCL389SP
+./scripts/inspect_unsigned_ipa.sh --impactor-team-id 3CKCL389SP .build/artifacts/KeiBA-iOS-*-impactor-unsigned.ipa
 ```
 
-这个参数只会改写复制出来的 IPA payload，不会修改 Xcode 项目中的正式 bundle id，
-因此不会影响日常开发、签名安装或归档分发。
+这种 Impactor 预处理包里出现 `Direct bundle nesting: invalid` 是正常的，因为 Watch widget
+会被预先写成 Impactor 签名后才会生成的前缀；真正要看的是 `Impactor bundle nesting: ok`。
+通用的 `--sideload-bundle-id` 仍然保留给那些不会自行追加 team id 的侧载工具使用。
 
 ## 测试和验证
 

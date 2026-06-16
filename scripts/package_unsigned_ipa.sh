@@ -20,6 +20,7 @@ Options:
   --build-version NUMBER     Override CURRENT_PROJECT_VERSION
   --artifact-slug SLUG       Override IPA version slug
   --sideload-bundle-id ID    Rewrite the IPA payload root bundle id for sideload
+  --impactor-team-id TEAM    Prepare Watch widget ids for Impactor Apple ID signing
   --developer-dir PATH       Export DEVELOPER_DIR for this invocation
   --clean                    Remove the script DerivedData before building
   --skip-package-resolve     Skip explicit Swift package resolution
@@ -39,6 +40,7 @@ marketing_version=""
 build_version=""
 artifact_slug=""
 sideload_bundle_id=""
+impactor_team_id=""
 clean=0
 skip_package_resolve=0
 
@@ -74,6 +76,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --sideload-bundle-id)
       sideload_bundle_id="$2"
+      shift 2
+      ;;
+    --impactor-team-id)
+      impactor_team_id="$2"
       shift 2
       ;;
     --developer-dir)
@@ -116,6 +122,11 @@ if [[ -z "$marketing_version" || -z "$build_version" || -z "$artifact_slug" ]]; 
   exit 1
 fi
 
+if [[ -n "$sideload_bundle_id" && -n "$impactor_team_id" ]]; then
+  echo "error: --sideload-bundle-id and --impactor-team-id are mutually exclusive" >&2
+  exit 64
+fi
+
 echo "KeiBA unsigned IPA"
 echo "  marketing version: $marketing_version"
 echo "  build version:     $build_version"
@@ -125,6 +136,9 @@ echo "  derived data:      $derived_data"
 echo "  SwiftPM cache:     $spm_cache"
 if [[ -n "$sideload_bundle_id" ]]; then
   echo "  sideload bundle:   $sideload_bundle_id"
+fi
+if [[ -n "$impactor_team_id" ]]; then
+  echo "  Impactor team id:  $impactor_team_id"
 fi
 if [[ -n "${DEVELOPER_DIR:-}" ]]; then
   echo "  DEVELOPER_DIR:     $DEVELOPER_DIR"
@@ -140,5 +154,6 @@ export CONFIGURATION="$configuration"
 export CLEAN_DERIVED_DATA="$clean"
 export SKIP_PACKAGE_RESOLVE="$skip_package_resolve"
 export SIDELOAD_BUNDLE_ID="$sideload_bundle_id"
+export IMPACTOR_TEAM_ID="$impactor_team_id"
 
 "$repo_root/scripts/ci/build_unsigned_ipa.sh"

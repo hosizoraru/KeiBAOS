@@ -135,20 +135,21 @@ Organizer から適切な Apple 署名方式で書き出します。
 ローカルのサイドロード検証や今後の LiveContainer サブスクリプション連携のベース成果物として
 使えますが、署名済み、TestFlight 用、App Store 用の書き出しではありません。
 
-一部のサイドロード用インストーラは、インストール前にルート app の bundle identifier を
-書き換えます。`AppexBundleIDNotPrefixed` が出た場合は、エラーに表示された期待 prefix から
-ルート bundle id を拾って再パッケージします。たとえば期待 prefix が
-`os.kei.KeiBA.3CKCL389SP.watchkitapp.` なら、渡す値は
-`os.kei.KeiBA.3CKCL389SP` です。
+Impactor は署名時に、選択した Apple Developer team id をルート app の bundle identifier
+へ付け足します。ただし現在の nested bundle 探索では、埋め込み Watch app の中にある
+WidgetKit extension を見落とすことがあります。`AppexBundleIDNotPrefixed` が出た場合は、
+エラーに表示された期待 prefix から team id を拾って再パッケージします。たとえば期待 prefix が
+`os.kei.KeiBA.3CKCL389SP.watchkitapp.` なら、Impactor team id は `3CKCL389SP` です。
 
 ```sh
-./scripts/package_unsigned_ipa.sh --sideload-bundle-id os.kei.KeiBA.3CKCL389SP
-./scripts/inspect_unsigned_ipa.sh .build/artifacts/KeiBA-iOS-*-unsigned.ipa
+./scripts/package_unsigned_ipa.sh --impactor-team-id 3CKCL389SP
+./scripts/inspect_unsigned_ipa.sh --impactor-team-id 3CKCL389SP .build/artifacts/KeiBA-iOS-*-impactor-unsigned.ipa
 ```
 
-このオプションが書き換えるのはコピー済みの IPA payload だけです。Xcode プロジェクト上の
-正式な bundle identifier は変更しないため、普段の開発、署名インストール、Archive 配布には
-影響しません。
+この Impactor 向けパッケージでは `Direct bundle nesting: invalid` が出るのは想定内です。
+Watch widget は Impactor 署名後に作られる identifier prefix に合わせて先に書き換えます。
+見るべき結果は `Impactor bundle nesting: ok` です。汎用の `--sideload-bundle-id` は、
+team id を自動で追加しないツール向けに残しています。
 
 ## テストと検証
 

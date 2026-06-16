@@ -25,6 +25,7 @@ Optional environment:
   SWIFTPM_CACHE_PATH         Default: <repo>/.build/xcode-sourcepackages
   IPA_BASENAME               Default: KeiBA-iOS-${ARTIFACT_SLUG}-unsigned.ipa
   SIDELOAD_BUNDLE_ID         Optional root bundle id for sideload-only payloads
+  IMPACTOR_TEAM_ID           Optional team id for Impactor Watch-widget preflight
   XCODEBUILD                 Default: xcodebuild
   SKIP_PACKAGE_RESOLVE       Set to 1 to skip explicit package resolution
   CLEAN_DERIVED_DATA         Set to 1 to remove DERIVED_DATA_PATH first
@@ -60,9 +61,14 @@ configuration="${CONFIGURATION:-Release}"
 derived_data="${DERIVED_DATA_PATH:-$default_work_root/KeiBA-iOS-Device}"
 artifacts_dir="${ARTIFACTS_DIR:-$default_work_root/KeiBA-artifacts}"
 swiftpm_cache="${SWIFTPM_CACHE_PATH:-$repo_root/.build/xcode-sourcepackages}"
-ipa_basename="${IPA_BASENAME:-KeiBA-iOS-$ARTIFACT_SLUG-unsigned.ipa}"
 xcodebuild_bin="${XCODEBUILD:-xcodebuild}"
 sideload_bundle_id="${SIDELOAD_BUNDLE_ID:-}"
+impactor_team_id="${IMPACTOR_TEAM_ID:-}"
+ipa_basename_default="KeiBA-iOS-$ARTIFACT_SLUG-unsigned.ipa"
+if [[ -n "$impactor_team_id" ]]; then
+  ipa_basename_default="KeiBA-iOS-$ARTIFACT_SLUG-impactor-unsigned.ipa"
+fi
+ipa_basename="${IPA_BASENAME:-$ipa_basename_default}"
 
 absolute_path() {
   local path="$1"
@@ -83,12 +89,25 @@ if [[ "$ipa_basename" == */* ]]; then
   exit 64
 fi
 
+if [[ -n "$sideload_bundle_id" && -n "$impactor_team_id" ]]; then
+  echo "error: SIDELOAD_BUNDLE_ID and IMPACTOR_TEAM_ID are mutually exclusive" >&2
+  exit 64
+fi
+
 validate_bundle_identifier() {
   local bundle_id="$1"
   if [[ ! "$bundle_id" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]] \
     || [[ "$bundle_id" != *.* ]] \
     || [[ "$bundle_id" == *..* ]]; then
     echo "error: invalid bundle identifier: $bundle_id" >&2
+    exit 64
+  fi
+}
+
+validate_team_identifier() {
+  local team_id="$1"
+  if [[ ! "$team_id" =~ ^[A-Za-z0-9]+$ ]]; then
+    echo "error: invalid team identifier: $team_id" >&2
     exit 64
   fi
 }
@@ -126,6 +145,40 @@ replacement_bundle_identifier() {
   fi
 }
 
+plist_replace_string_if_present() {
+  local plist_path="$1"
+  local key_path="$2"
+  local old_prefix="$3"
+  local new_prefix="$4"
+  local current_value
+  local new_value
+
+  current_value="$(/usr/libexec/PlistBuddy -c "Print :$key_path" "$plist_path" 2>/dev/null || true)"
+  if [[ -z "$current_value" ]]; then
+    return 1
+  fi
+
+  new_value="${current_value//$old_prefix/$new_prefix}"
+  if [[ "$new_value" == "$current_value" ]]; then
+    return 1
+  fi
+
+  /usr/libexec/PlistBuddy -c "Set :$key_path $new_value" "$plist_path" >/dev/null
+}
+
+plist_replace_matching_identifiers() {
+  local plist_path="$1"
+  local old_prefix="$2"
+  local new_prefix="$3"
+  local changed=1
+
+  plist_replace_string_if_present "$plist_path" CFBundleIdentifier "$old_prefix" "$new_prefix" && changed=0
+  plist_replace_string_if_present "$plist_path" WKCompanionAppBundleIdentifier "$old_prefix" "$new_prefix" && changed=0
+  plist_replace_string_if_present "$plist_path" NSExtension:NSExtensionAttributes:WKAppBundleIdentifier "$old_prefix" "$new_prefix" && changed=0
+
+  return "$changed"
+}
+
 rewrite_bundle_identifier_with_prefix() {
   local bundle_path="$1"
   local old_prefix="$2"
@@ -146,7 +199,7 @@ rewrite_bundle_identifier_with_prefix() {
     return 0
   fi
 
-  plist_set_string "$bundle_path/Info.plist" CFBundleIdentifier "$new_id"
+  plist_replace_matching_identifiers "$bundle_path/Info.plist" "$old_prefix" "$new_prefix" >/dev/null || true
 }
 
 rewrite_payload_for_sideload() {
@@ -199,6 +252,53 @@ rewrite_payload_for_sideload() {
   fi
 }
 
+rewrite_watch_extensions_for_impactor() {
+  local payload_app="$1"
+  local team_id="$2"
+  local app_plist="$payload_app/Info.plist"
+  local old_root_id
+  local impactor_root_id
+
+  validate_team_identifier "$team_id"
+
+  old_root_id="$(plist_get "$app_plist" CFBundleIdentifier)"
+  if [[ -z "$old_root_id" ]]; then
+    echo "error: app bundle has no CFBundleIdentifier: $app_plist" >&2
+    exit 1
+  fi
+
+  impactor_root_id="$old_root_id.$team_id"
+  validate_bundle_identifier "$impactor_root_id"
+
+  echo "Preparing Impactor Watch extensions for root: $old_root_id -> $impactor_root_id"
+  if [[ ! -d "$payload_app/Watch" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r -d '' watch_app_path; do
+    local old_watch_id
+    local impactor_watch_id
+
+    old_watch_id="$(bundle_identifier "$watch_app_path")"
+    if [[ -z "$old_watch_id" ]]; then
+      echo "warning: Watch app has no CFBundleIdentifier: $watch_app_path" >&2
+      continue
+    fi
+
+    impactor_watch_id="$(replacement_bundle_identifier "$old_watch_id" "$old_root_id" "$impactor_root_id")"
+    if [[ "$impactor_watch_id" == "$old_watch_id" ]]; then
+      echo "warning: Watch app bundle id is not under $old_root_id: $old_watch_id" >&2
+      continue
+    fi
+
+    if [[ -d "$watch_app_path/PlugIns" ]]; then
+      while IFS= read -r -d '' watch_extension_path; do
+        rewrite_bundle_identifier_with_prefix "$watch_extension_path" "$old_watch_id" "$impactor_watch_id" "Impactor Watch extension"
+      done < <(find "$watch_app_path/PlugIns" -maxdepth 1 -type d -name '*.appex' -print0)
+    fi
+  done < <(find "$payload_app/Watch" -maxdepth 1 -type d -name '*.app' -print0)
+}
+
 if [[ "${CLEAN_DERIVED_DATA:-0}" == "1" ]]; then
   rm -rf "$derived_data"
 fi
@@ -239,6 +339,8 @@ ditto "$app_path" "$payload_dir/KeiBA.app"
 
 if [[ -n "$sideload_bundle_id" ]]; then
   rewrite_payload_for_sideload "$payload_dir/KeiBA.app" "$sideload_bundle_id"
+elif [[ -n "$impactor_team_id" ]]; then
+  rewrite_watch_extensions_for_impactor "$payload_dir/KeiBA.app" "$impactor_team_id"
 fi
 
 (
