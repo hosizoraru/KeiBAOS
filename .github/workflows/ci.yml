@@ -311,41 +311,17 @@ jobs:
             ${{ runner.os }}-xcode-26.4.1-spm-
 
       - name: Build unsigned iOS IPA payload
-        run: |
-          set -euo pipefail
-          derived_data="$RUNNER_TEMP/KeiBA-iOS-Device"
-          artifacts="$RUNNER_TEMP/KeiBA-artifacts"
-          app_path="$derived_data/Build/Products/Release-iphoneos/KeiBA.app"
-          payload_root="$artifacts/iphoneos"
-          payload_dir="$payload_root/Payload"
-
-          xcodebuild build \
-            -project KeiBA.xcodeproj \
-            -scheme KeiBA \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "$derived_data" \
-            -clonedSourcePackagesDirPath "$SWIFTPM_CACHE_PATH" \
-            MARKETING_VERSION="$APP_MARKETING_VERSION" \
-            CURRENT_PROJECT_VERSION="$APP_BUILD_VERSION" \
-            CODE_SIGNING_ALLOWED=NO
-
-          test -d "$app_path"
-          rm -rf "$payload_root"
-          mkdir -p "$payload_dir" "$artifacts"
-          ipa_path="$artifacts/KeiBA-iOS-$ARTIFACT_SLUG-unsigned.ipa"
-          ditto "$app_path" "$payload_dir/KeiBA.app"
-          (
-            cd "$payload_root"
-            COPYFILE_DISABLE=1 zip -qry "$ipa_path" Payload
-          )
-          du -h "$ipa_path"
+        id: unsigned-ipa
+        env:
+          ARTIFACTS_DIR: ${{ runner.temp }}/KeiBA-artifacts
+          DERIVED_DATA_PATH: ${{ runner.temp }}/KeiBA-iOS-Device
+        run: scripts/ci/build_unsigned_ipa.sh
 
       - name: Upload unsigned iOS IPA
         uses: actions/upload-artifact@v7
         with:
           name: KeiBA-iOS-${{ needs.version.outputs.artifact_slug }}-unsigned
-          path: ${{ runner.temp }}/KeiBA-artifacts/KeiBA-iOS-${{ needs.version.outputs.artifact_slug }}-unsigned.ipa
+          path: ${{ steps.unsigned-ipa.outputs.ipa_path }}
           if-no-files-found: error
           retention-days: 14
 
