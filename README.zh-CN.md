@@ -126,6 +126,19 @@ DerivedData、SwiftPM cache 与产物写入已忽略的 `.build/`。它适合作
 也可以作为后续接入 LiveContainer 订阅的基础产物；它仍然不是已经签名、TestFlight 或
 App Store 可直接发布的包。
 
+部分侧载工具会在安装前改写主 app 的 bundle identifier。若工具提示
+`AppexBundleIDNotPrefixed`，请按提示里的期望前缀重新打包：例如期望前缀是
+`os.kei.KeiBA.3CKCL389SP.watchkitapp.`，则侧载根 bundle id 应传
+`os.kei.KeiBA.3CKCL389SP`。
+
+```sh
+./scripts/package_unsigned_ipa.sh --sideload-bundle-id os.kei.KeiBA.3CKCL389SP
+./scripts/inspect_unsigned_ipa.sh .build/artifacts/KeiBA-iOS-*-unsigned.ipa
+```
+
+这个参数只会改写复制出来的 IPA payload，不会修改 Xcode 项目中的正式 bundle id，
+因此不会影响日常开发、签名安装或归档分发。
+
 ## 测试和验证
 
 快速本地检查：

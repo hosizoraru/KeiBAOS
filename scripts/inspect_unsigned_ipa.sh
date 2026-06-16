@@ -9,8 +9,8 @@ Usage:
   scripts/inspect_unsigned_ipa.sh PATH_TO_IPA [PATH_TO_IPA ...]
 
 Checks that the IPA has a Payload/*.app root, prints bundle metadata, lists
-embedded extensions/watch content, and reports whether _CodeSignature folders
-are present.
+embedded extensions/watch content, verifies nested bundle identifier prefixes,
+and reports whether _CodeSignature folders are present.
 EOF
 }
 
@@ -50,16 +50,28 @@ inspect_ipa() {
     return 1
   fi
 
-  plist_value() {
-    /usr/libexec/PlistBuddy -c "Print :$1" "$plist" 2>/dev/null || true
+  plist_value_from() {
+    local plist_path="$1"
+    local key="$2"
+    /usr/libexec/PlistBuddy -c "Print :$key" "$plist_path" 2>/dev/null || true
+  }
+
+  bundle_id_for_path() {
+    local bundle_path="$1"
+    plist_value_from "$bundle_path/Info.plist" CFBundleIdentifier
+  }
+
+  relative_bundle_path() {
+    local bundle_path="$1"
+    printf 'KeiBA.app%s\n' "${bundle_path#"$app_path"}"
   }
 
   local bundle_id short_version build_version display_name executable sha256
-  bundle_id="$(plist_value CFBundleIdentifier)"
-  short_version="$(plist_value CFBundleShortVersionString)"
-  build_version="$(plist_value CFBundleVersion)"
-  display_name="$(plist_value CFBundleDisplayName)"
-  executable="$(plist_value CFBundleExecutable)"
+  bundle_id="$(plist_value_from "$plist" CFBundleIdentifier)"
+  short_version="$(plist_value_from "$plist" CFBundleShortVersionString)"
+  build_version="$(plist_value_from "$plist" CFBundleVersion)"
+  display_name="$(plist_value_from "$plist" CFBundleDisplayName)"
+  executable="$(plist_value_from "$plist" CFBundleExecutable)"
   sha256="$(shasum -a 256 "$ipa_path" | awk '{print $1}')"
 
   echo "IPA: $ipa_path"
@@ -73,9 +85,80 @@ inspect_ipa() {
 
   echo
   echo "Embedded bundles:"
-  find "$app_path" -maxdepth 5 \
+  while IFS= read -r -d '' embedded_bundle_path; do
+    local embedded_id
+    embedded_id="$(bundle_id_for_path "$embedded_bundle_path")"
+    if [[ -n "$embedded_id" ]]; then
+      printf '%s -> %s\n' "$(relative_bundle_path "$embedded_bundle_path")" "$embedded_id"
+    else
+      relative_bundle_path "$embedded_bundle_path"
+    fi
+  done < <(find "$app_path" -maxdepth 5 \
     \( -path "$app_path" -o -name '*.appex' -o -name '*.app' \) \
-    -type d -print | sed "s#^$app_path#KeiBA.app#"
+    -type d -print0)
+
+  local nesting_errors=()
+  add_nesting_error() {
+    nesting_errors+=("$1")
+  }
+
+  check_bundle_prefix() {
+    local bundle_path="$1"
+    local parent_id="$2"
+    local current_id
+    local expected_prefix
+    current_id="$(bundle_id_for_path "$bundle_path")"
+    expected_prefix="$parent_id."
+
+    if [[ -z "$current_id" ]]; then
+      add_nesting_error "$(relative_bundle_path "$bundle_path") has no CFBundleIdentifier"
+    elif [[ "$current_id" != "$expected_prefix"* ]]; then
+      add_nesting_error "$(relative_bundle_path "$bundle_path") -> $current_id; expected prefix $expected_prefix"
+    fi
+  }
+
+  check_watch_companion() {
+    local watch_app_path="$1"
+    local companion_id
+    companion_id="$(plist_value_from "$watch_app_path/Info.plist" WKCompanionAppBundleIdentifier)"
+    if [[ "$companion_id" != "$bundle_id" ]]; then
+      add_nesting_error "$(relative_bundle_path "$watch_app_path") WKCompanionAppBundleIdentifier -> ${companion_id:-missing}; expected $bundle_id"
+    fi
+  }
+
+  if [[ -z "$bundle_id" ]]; then
+    add_nesting_error "KeiBA.app has no CFBundleIdentifier"
+  else
+    if [[ -d "$app_path/PlugIns" ]]; then
+      while IFS= read -r -d '' app_extension_path; do
+        check_bundle_prefix "$app_extension_path" "$bundle_id"
+      done < <(find "$app_path/PlugIns" -maxdepth 1 -type d -name '*.appex' -print0)
+    fi
+
+    if [[ -d "$app_path/Watch" ]]; then
+      while IFS= read -r -d '' watch_app_path; do
+        local watch_bundle_id
+        check_bundle_prefix "$watch_app_path" "$bundle_id"
+        check_watch_companion "$watch_app_path"
+
+        watch_bundle_id="$(bundle_id_for_path "$watch_app_path")"
+        if [[ -n "$watch_bundle_id" && -d "$watch_app_path/PlugIns" ]]; then
+          while IFS= read -r -d '' watch_extension_path; do
+            check_bundle_prefix "$watch_extension_path" "$watch_bundle_id"
+          done < <(find "$watch_app_path/PlugIns" -maxdepth 1 -type d -name '*.appex' -print0)
+        fi
+      done < <(find "$app_path/Watch" -maxdepth 1 -type d -name '*.app' -print0)
+    fi
+  fi
+
+  echo
+  if [[ "${#nesting_errors[@]}" -eq 0 ]]; then
+    echo "Bundle nesting: ok"
+  else
+    echo "Bundle nesting: invalid"
+    printf '  %s\n' "${nesting_errors[@]}"
+    return 1
+  fi
 
   echo
   if find "$app_path" -type d -name '_CodeSignature' -print -quit | grep -q .; then

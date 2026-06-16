@@ -135,6 +135,21 @@ the same artifact version metadata, and writes ignored build output under
 artifact for future LiveContainer subscription work; it is still unsigned and
 not a TestFlight/App Store export.
 
+Some sideload installers rewrite the root app bundle identifier before
+installing. If a tool reports `AppexBundleIDNotPrefixed`, rebuild the IPA with
+the root bundle id shown by the installer. For example, an expected prefix of
+`os.kei.KeiBA.3CKCL389SP.watchkitapp.` means the sideload root is
+`os.kei.KeiBA.3CKCL389SP`:
+
+```sh
+./scripts/package_unsigned_ipa.sh --sideload-bundle-id os.kei.KeiBA.3CKCL389SP
+./scripts/inspect_unsigned_ipa.sh .build/artifacts/KeiBA-iOS-*-unsigned.ipa
+```
+
+The sideload bundle option only rewrites the copied IPA payload. It does not
+change the Xcode project bundle identifiers used for normal development and
+signed distribution.
+
 ## Test And Validate
 
 Fast local checks:

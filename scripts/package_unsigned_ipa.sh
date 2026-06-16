@@ -19,6 +19,7 @@ Options:
   --marketing-version X.Y.Z  Override MARKETING_VERSION
   --build-version NUMBER     Override CURRENT_PROJECT_VERSION
   --artifact-slug SLUG       Override IPA version slug
+  --sideload-bundle-id ID    Rewrite the IPA payload root bundle id for sideload
   --developer-dir PATH       Export DEVELOPER_DIR for this invocation
   --clean                    Remove the script DerivedData before building
   --skip-package-resolve     Skip explicit Swift package resolution
@@ -37,6 +38,7 @@ configuration="Release"
 marketing_version=""
 build_version=""
 artifact_slug=""
+sideload_bundle_id=""
 clean=0
 skip_package_resolve=0
 
@@ -68,6 +70,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --artifact-slug)
       artifact_slug="$2"
+      shift 2
+      ;;
+    --sideload-bundle-id)
+      sideload_bundle_id="$2"
       shift 2
       ;;
     --developer-dir)
@@ -117,6 +123,9 @@ echo "  artifact slug:     $artifact_slug"
 echo "  output dir:        $output_dir"
 echo "  derived data:      $derived_data"
 echo "  SwiftPM cache:     $spm_cache"
+if [[ -n "$sideload_bundle_id" ]]; then
+  echo "  sideload bundle:   $sideload_bundle_id"
+fi
 if [[ -n "${DEVELOPER_DIR:-}" ]]; then
   echo "  DEVELOPER_DIR:     $DEVELOPER_DIR"
 fi
@@ -130,5 +139,6 @@ export SWIFTPM_CACHE_PATH="$spm_cache"
 export CONFIGURATION="$configuration"
 export CLEAN_DERIVED_DATA="$clean"
 export SKIP_PACKAGE_RESOLVE="$skip_package_resolve"
+export SIDELOAD_BUNDLE_ID="$sideload_bundle_id"
 
 "$repo_root/scripts/ci/build_unsigned_ipa.sh"
