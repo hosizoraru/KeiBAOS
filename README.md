@@ -122,6 +122,19 @@ For a distributable build, select `Any iOS Device (arm64)`, use
 `Product > Archive`, then distribute from Organizer with the appropriate Apple
 signing method.
 
+Unsigned IPA smoke-test builds:
+
+```sh
+./scripts/package_unsigned_ipa.sh
+./scripts/inspect_unsigned_ipa.sh .build/artifacts/KeiBA-iOS-*-unsigned.ipa
+```
+
+The local packaging script mirrors the GitHub Actions unsigned IPA path, resolves
+the same artifact version metadata, and writes ignored build output under
+`.build/` by default. Use it for local sideload smoke tests or as the base
+artifact for future LiveContainer subscription work; it is still unsigned and
+not a TestFlight/App Store export.
+
 ## Test And Validate
 
 Fast local checks:

@@ -123,6 +123,18 @@ xcodebuild build \
 配布用ビルドでは `Any iOS Device (arm64)` を選択し、`Product > Archive` を実行したあと、
 Organizer から適切な Apple 署名方式で書き出します。
 
+サイドロードのスモークテスト向けに未署名 IPA を作成する場合：
+
+```sh
+./scripts/package_unsigned_ipa.sh
+./scripts/inspect_unsigned_ipa.sh .build/artifacts/KeiBA-iOS-*-unsigned.ipa
+```
+
+ローカルのパッケージ作成スクリプトは GitHub Actions の未署名 IPA 経路とバージョン命名に
+合わせ、DerivedData、SwiftPM cache、成果物を既定で無視済みの `.build/` に出力します。
+ローカルのサイドロード検証や今後の LiveContainer サブスクリプション連携のベース成果物として
+使えますが、署名済み、TestFlight 用、App Store 用の書き出しではありません。
+
 ## テストと検証
 
 軽量なローカルチェック：

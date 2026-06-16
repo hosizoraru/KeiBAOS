@@ -114,6 +114,18 @@ xcodebuild build \
 需要生成可分发构建时，选择 `Any iOS Device (arm64)`，使用 `Product > Archive`，
 再在 Organizer 中按需要的 Apple 签名方式导出。
 
+生成未签名 IPA 进行侧载冒烟测试：
+
+```sh
+./scripts/package_unsigned_ipa.sh
+./scripts/inspect_unsigned_ipa.sh .build/artifacts/KeiBA-iOS-*-unsigned.ipa
+```
+
+本地打包脚本会复用 GitHub Actions 的未签名 IPA 路径和版本命名逻辑，并默认把
+DerivedData、SwiftPM cache 与产物写入已忽略的 `.build/`。它适合作为本地侧载测试包，
+也可以作为后续接入 LiveContainer 订阅的基础产物；它仍然不是已经签名、TestFlight 或
+App Store 可直接发布的包。
+
 ## 测试和验证
 
 快速本地检查：
